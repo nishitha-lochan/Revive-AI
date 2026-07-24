@@ -244,11 +244,29 @@ def chat_with_repo(payload: Dict[str, Any] = Body(...), db: Session = Depends(ge
 
     analysis = db.query(RepositoryAnalysis).filter(RepositoryAnalysis.project_id == project.id).first()
     summary_txt = analysis.summary if analysis else ""
+    tech_stack = ""
+    arch_info = ""
+    if analysis:
+        try:
+            stack_list = json.loads(analysis.tech_stack_json or "[]")
+            if stack_list:
+                tech_stack = ", ".join(str(s) for s in stack_list)
+        except Exception:
+            pass
+        try:
+            arch_data = json.loads(analysis.architecture_graph_json or "{}")
+            nodes = arch_data.get("nodes", [])
+            if nodes:
+                arch_info = ", ".join(n.get("id", "") for n in nodes[:20])
+        except Exception:
+            pass
 
     context = (
         f"Project: {project.owner}/{project.repo_name}\n"
         f"Language: {project.primary_language}\n"
         f"Framework: {project.framework}\n"
+        f"Tech Stack: {tech_stack or 'N/A'}\n"
+        f"Key Modules: {arch_info or 'N/A'}\n"
         f"Summary: {summary_txt}"
     )
     ai_res = AIService.generate_chat_response(prompt, context, openai_key)

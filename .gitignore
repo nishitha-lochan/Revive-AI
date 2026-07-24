@@ -1,0 +1,88 @@
+# ===========================
+# Revive AI — .gitignore
+# ===========================
+
+# ─── Python / Backend ───────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.Python
+pip-wheel-metadata/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+.env/
+
+# Environment variables / secrets
+.env
+.env.local
+.env.*.local
+*.env
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Pytest cache
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# ─── Node / Frontend ────────────────────────────────
+node_modules/
+.next/
+out/
+dist/
+.turbo/
+
+# Next.js build output
+.next/
+next-env.d.ts
+
+# npm / yarn / pnpm lockfile artifacts
+.npm/
+.yarn/
+.pnpm-store/
+
+# TypeScript build cache
+*.tsbuildinfo
+
+# ─── OS & Editors ───────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# VSCode
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+!.vscode/extensions.json
+
+# JetBrains
+.idea/
+*.iml
+
+# ─── Docker ─────────────────────────────────────────
+docker-compose.override.yml
+
+# ─── Misc ────────────────────────────────────────────
+*.bak
+*.tmp
+*.swp
+*.swo
+*.orig
+*.patch
+*.rej
