@@ -37,14 +37,27 @@ export interface ProjectData {
 }
 
 export async function analyzeRepository(repoUrl: string): Promise<any> {
-  const res = await fetch(`${API_BASE_URL}/analyze`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ repo_url: repoUrl }),
-  });
+  let res: Response;
+  try {
+    // Use a long timeout — Render free tier can have ~30s cold starts
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120000); // 2 min
+    res = await fetch(`${API_BASE_URL}/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo_url: repoUrl }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      throw new Error("Request timed out. The backend may be waking up — please try again in 30 seconds.");
+    }
+    throw new Error("Cannot reach the backend server. Please check your internet connection or try again shortly.");
+  }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: "Failed to analyze repository" }));
-    throw new Error(err.detail || "Analysis failed");
+    const errBody = await res.json().catch(() => ({ detail: "Failed to analyze repository" }));
+    throw new Error(errBody.detail || `Server error ${res.status}`);
   }
   return res.json();
 }
@@ -72,12 +85,20 @@ export async function fetchProjectDetails(id: number): Promise<ProjectData | nul
 }
 
 export async function sendRepoChat(projectId: number, prompt: string): Promise<any> {
-  const res = await fetch(`${API_BASE_URL}/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ project_id: projectId, prompt }),
-  });
-  if (!res.ok) throw new Error("Chat request failed");
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_id: projectId, prompt }),
+    });
+  } catch (err: any) {
+    throw new Error("Cannot reach the backend server. Please try again.");
+  }
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({ detail: "Chat request failed" }));
+    throw new Error(errBody.detail || `Server error ${res.status}`);
+  }
   return res.json();
 }
 
