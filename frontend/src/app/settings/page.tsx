@@ -20,6 +20,14 @@ export default function SettingsPage() {
     fetchUserProfile().then((u) => {
       if (u) {
         setName(u.name || 'Lead Developer');
+        // Restore key presence in the store so the Navbar shows the correct status.
+        // We don't expose the raw key — use a sentinel value so the store knows a key exists.
+        if (u.has_openai_key || u.has_github_token) {
+          setApiKeys(
+            u.has_openai_key ? '••••••••' : '',
+            u.has_github_token ? '••••••••' : ''
+          );
+        }
       }
     });
   }, []);
