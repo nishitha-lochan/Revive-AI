@@ -1,12 +1,6 @@
-const getApiBaseUrl = () => {
-  const envUrl = process.env.NEXT_PUBLIC_API_URL;
-  if (envUrl) {
-    return envUrl.endsWith("/api") ? envUrl : `${envUrl.replace(/\/$/, "")}/api`;
-  }
-  return "http://localhost:8000/api";
-};
-
-const API_BASE_URL = getApiBaseUrl();
+// Always use relative "/api" so requests go through Next.js rewrites,
+// which proxy to the backend in both dev and production.
+const API_BASE_URL = "/api";
 
 export interface ProjectData {
   id: number;
