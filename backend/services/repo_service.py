@@ -6,6 +6,12 @@ import urllib.parse
 import urllib.request
 from typing import Dict, Any, List, Optional
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
 
 class RepoService:
     @staticmethod
@@ -53,6 +59,20 @@ class RepoService:
                     return res.read().decode("utf-8", errors="ignore")
         except Exception:
             pass
+        return None
+
+    @staticmethod
+    def fetch_raw_github_file(owner: str, repo: str, path: str, branch: str = "main") -> Optional[str]:
+        """Fetch raw file content directly from raw.githubusercontent.com bypassing GitHub API rate limits."""
+        for b in [branch, "main", "master", "dev", "trunk"]:
+            url = f"https://raw.githubusercontent.com/{owner}/{repo}/{b}/{path}"
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+                with urllib.request.urlopen(req, timeout=6) as res:
+                    if res.status == 200:
+                        return res.read().decode("utf-8", errors="ignore")
+            except Exception:
+                pass
         return None
 
     @staticmethod
@@ -243,33 +263,43 @@ class RepoService:
             test_files = []
             has_tests = False
 
-        # Read key file contents from repository
+        # Read key file contents from repository (with raw.githubusercontent.com rate-limit bypass)
         readme_txt = RepoService._gh_get_raw(f"/repos/{owner}/{repo}/contents/README.md", github_token) or ""
         if not readme_txt:
             readme_txt = RepoService._gh_get_raw(f"/repos/{owner}/{repo}/contents/readme.md", github_token) or ""
+        if not readme_txt:
+            readme_txt = RepoService.fetch_raw_github_file(owner, repo, "README.md", default_branch) or ""
+        if not readme_txt:
+            readme_txt = RepoService.fetch_raw_github_file(owner, repo, "readme.md", default_branch) or ""
 
         manifest_txt = ""
         manifest_name = ""
-        for mf in ["package.json", "requirements.txt", "pyproject.toml", "go.mod", "Cargo.toml"]:
-            if mf in file_paths:
-                m_content = RepoService._gh_get_raw(f"/repos/{owner}/{repo}/contents/{mf}", github_token)
-                if m_content:
-                    manifest_txt = m_content[:1500]
-                    manifest_name = mf
-                    break
+        for mf in ["package.json", "pom.xml", "build.gradle", "requirements.txt", "pyproject.toml", "go.mod", "Cargo.toml"]:
+            m_content = RepoService._gh_get_raw(f"/repos/{owner}/{repo}/contents/{mf}", github_token)
+            if not m_content:
+                m_content = RepoService.fetch_raw_github_file(owner, repo, mf, default_branch)
+            if m_content:
+                manifest_txt = m_content[:1500]
+                manifest_name = mf
+                break
 
         entrypoint_txt = ""
         entrypoint_name = ""
-        for ep in file_paths:
-            if any(ep.endswith(suffix) for suffix in ["main.py", "app.py", "server.js", "index.ts", "index.js", "App.tsx", "page.tsx", "main.go", "main.rs"]):
-                ep_content = RepoService._gh_get_raw(f"/repos/{owner}/{repo}/contents/{ep}", github_token)
-                if ep_content:
-                    entrypoint_txt = ep_content[:2000]
-                    entrypoint_name = ep
-                    break
+        candidate_eps = [fp for fp in file_paths if any(fp.endswith(s) for s in ["main.py", "app.py", "server.js", "index.ts", "index.js", "App.tsx", "page.tsx", "main.go", "main.rs", ".java"])]
+        if not candidate_eps:
+            candidate_eps = ["src/index.ts", "main.py", "app.py", "src/App.tsx", "main.go", "src/main/java/com/example/demo/DemoApplication.java"]
+
+        for ep in candidate_eps[:4]:
+            ep_content = RepoService._gh_get_raw(f"/repos/{owner}/{repo}/contents/{ep}", github_token)
+            if not ep_content:
+                ep_content = RepoService.fetch_raw_github_file(owner, repo, ep, default_branch)
+            if ep_content:
+                entrypoint_txt = ep_content[:2000]
+                entrypoint_name = ep
+                break
 
         purpose, implemented, missing = RepoService._analyze_project_features(
-            owner, repo, intel, file_paths, readme_txt, manifest_txt, entrypoint_txt
+            owner, repo, intel, file_paths, readme_txt, manifest_name, manifest_txt, entrypoint_name, entrypoint_txt
         )
 
         intel.update({
@@ -295,8 +325,36 @@ class RepoService:
     @staticmethod
     def _analyze_project_features(
         owner: str, repo: str, intel: Dict[str, Any], file_paths: List[str],
-        readme_txt: str, manifest_txt: str, entrypoint_txt: str
+        readme_txt: str, manifest_name: str, manifest_txt: str,
+        entrypoint_name: str, entrypoint_txt: str
     ):
+        # --- LLM-first analysis: generate 100% repo-specific output via Gemini/OpenAI ---
+        try:
+            from services.ai_service import AIService
+            llm_result = AIService.analyze_repository_with_llm(
+                owner=owner,
+                repo=repo,
+                readme_txt=readme_txt,
+                manifest_name=manifest_name or "package.json",
+                manifest_txt=manifest_txt,
+                entrypoint_name=entrypoint_name or "",
+                entrypoint_txt=entrypoint_txt,
+                intel=intel
+            )
+            if llm_result and llm_result.get("purpose"):
+                llm_impl = llm_result.get("implemented_features") or []
+                llm_miss = llm_result.get("missing_features") or []
+                # Supplement missing items from heuristics if LLM gave fewer than 2
+                if len(llm_miss) < 2:
+                    if not intel.get("has_tests"):
+                        llm_miss.append("Automated test suite (unit and integration test specs)")
+                    if not intel.get("has_ci"):
+                        llm_miss.append("Automated CI/CD pipeline (GitHub Actions)")
+                return llm_result["purpose"], llm_impl[:6], llm_miss[:6]
+        except Exception:
+            pass
+
+        # --- Heuristic fallback (used when no API key is configured) ---
         purpose = ""
         if readme_txt:
             for l in readme_txt.splitlines():

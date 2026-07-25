@@ -70,39 +70,45 @@ class AIService:
             f"--- CODEBASE CONTEXT ---\n{repo_context}\n--- END CODEBASE CONTEXT ---"
         )
 
+        import time
         # ── 1. Try Google Gemini API ──────────────────────────────────────
         if g_key:
-            for model_name in ["gemini-2.0-flash", "gemini-1.5-flash"]:
-                try:
-                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={g_key}"
-                    headers = {"Content-Type": "application/json"}
-                    body = {
-                        "contents": [
-                            {
-                                "role": "user",
-                                "parts": [
-                                    {"text": f"{system_instruction}\n\nUser Question: {prompt}"}
-                                ]
+            for model_name in ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash"]:
+                for attempt in range(2):
+                    try:
+                        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={g_key}"
+                        headers = {"Content-Type": "application/json"}
+                        body = {
+                            "contents": [
+                                {
+                                    "role": "user",
+                                    "parts": [
+                                        {"text": f"{system_instruction}\n\nUser Question: {prompt}"}
+                                    ]
+                                }
+                            ],
+                            "generationConfig": {
+                                "temperature": 0.3,
+                                "maxOutputTokens": 1500
                             }
-                        ],
-                        "generationConfig": {
-                            "temperature": 0.3,
-                            "maxOutputTokens": 1500
                         }
-                    }
-                    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers)
-                    with urllib.request.urlopen(req, timeout=25) as res:
-                        data = json.loads(res.read().decode())
-                        reply = data["candidates"][0]["content"]["parts"][0]["text"]
-                        refs = AIService._extract_references_from_reply(reply)
-                        return {
-                            "message": reply,
-                            "model": f"Gemini ({model_name})",
-                            "references": refs
-                        }
-                except Exception as e:
-                    print(f"Gemini API ({model_name}) call failed: {e}")
-                    pass
+                        req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers)
+                        with urllib.request.urlopen(req, timeout=25) as res:
+                            data = json.loads(res.read().decode())
+                            reply = data["candidates"][0]["content"]["parts"][0]["text"]
+                            refs = AIService._extract_references_from_reply(reply)
+                            return {
+                                "message": reply,
+                                "model": f"Gemini ({model_name})",
+                                "references": refs
+                            }
+                    except Exception as e:
+                        err_str = str(e)
+                        if "429" in err_str and attempt == 0:
+                            time.sleep(5)
+                            continue
+                        print(f"Gemini API ({model_name}) call failed: {e}")
+                        break
 
         # ── 2. Try OpenAI API ─────────────────────────────────────────────
         if o_key:
@@ -212,4 +218,108 @@ class AIService:
                 value = line.split(":", 1)[1].strip()
                 if value and value.lower() not in ("none", "null", "unknown", ""):
                     return value
+        return None
+
+    @staticmethod
+    def analyze_repository_with_llm(
+        owner: str,
+        repo: str,
+        readme_txt: str,
+        manifest_name: str,
+        manifest_txt: str,
+        entrypoint_name: str,
+        entrypoint_txt: str,
+        intel: Dict[str, Any],
+        openai_key: Optional[str] = None,
+        gemini_key: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        import time
+        g_key = AIService.get_gemini_key(gemini_key)
+        o_key = AIService.get_openai_key(openai_key)
+        if not g_key and not o_key:
+            return None
+
+        prompt = (
+            f"Perform deep architectural diagnosis for GitHub Repository '{owner}/{repo}'.\n"
+            f"Language: {intel.get('primary_language')}, Framework: {intel.get('framework')}\n"
+            f"Manifest ({manifest_name}):\n{manifest_txt[:1000]}\n"
+            f"Entrypoint ({entrypoint_name}):\n{entrypoint_txt[:1000]}\n"
+            f"README Excerpt:\n{readme_txt[:2000]}\n\n"
+            "Respond ONLY with a valid JSON object (no markdown fences) matching this exact schema:\n"
+            "{\n"
+            '  "purpose": "A concise 1-2 sentence explanation of what this specific project is built for.",\n'
+            '  "implemented_features": ["Feature 1", "Feature 2", "Feature 3", "Feature 4"],\n'
+            '  "missing_features": ["Missing feature or gap 1", "Missing feature 2", "Missing feature 3"],\n'
+            '  "revival_blueprint": "A concise step-by-step technical strategy to revive this repository."\n'
+            "}"
+        )
+
+        def _strip_json_fences(raw: str) -> str:
+            raw = raw.strip()
+            if raw.startswith("```"):
+                raw = re.sub(r"^```[a-zA-Z]*\n?", "", raw)
+                raw = re.sub(r"\n?```$", "", raw)
+            return raw.strip()
+
+        # Try Gemini — lite models first (higher free quota), then full models, with 429 backoff
+        if g_key:
+            gemini_models = [
+                "gemini-2.0-flash-lite",
+                "gemini-2.0-flash",
+                "gemini-2.5-flash-lite",
+                "gemini-2.5-flash",
+            ]
+            for model_name in gemini_models:
+                for attempt in range(2):  # 1 retry on 429
+                    try:
+                        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={g_key}"
+                        headers = {"Content-Type": "application/json"}
+                        body = {
+                            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 800}
+                        }
+                        req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers)
+                        with urllib.request.urlopen(req, timeout=25) as res:
+                            data = json.loads(res.read().decode())
+                            raw_json = data["candidates"][0]["content"]["parts"][0]["text"]
+                            result = json.loads(_strip_json_fences(raw_json))
+                            print(f"[ReviveAI] LLM analysis OK via {model_name} for {owner}/{repo}")
+                            return result
+                    except Exception as e:
+                        err_str = str(e)
+                        if "429" in err_str and attempt == 0:
+                            print(f"[ReviveAI] {model_name} rate limited, retrying in 5s...")
+                            time.sleep(5)
+                            continue
+                        print(f"[ReviveAI] {model_name} attempt {attempt+1} failed: {err_str[:120]}")
+                        break  # Move to next model
+
+        # OpenAI fallback
+        if o_key:
+            for attempt in range(2):
+                try:
+                    url = "https://api.openai.com/v1/chat/completions"
+                    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {o_key}"}
+                    body = {
+                        "model": "gpt-4o-mini",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "response_format": {"type": "json_object"},
+                        "temperature": 0.2
+                    }
+                    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers)
+                    with urllib.request.urlopen(req, timeout=25) as res:
+                        data = json.loads(res.read().decode())
+                        raw_json = data["choices"][0]["message"]["content"]
+                        result = json.loads(_strip_json_fences(raw_json))
+                        print(f"[ReviveAI] LLM analysis OK via gpt-4o-mini for {owner}/{repo}")
+                        return result
+                except Exception as e:
+                    err_str = str(e)
+                    if "429" in err_str and attempt == 0:
+                        time.sleep(5)
+                        continue
+                    print(f"[ReviveAI] OpenAI failed: {err_str[:120]}")
+                    break
+
+        print(f"[ReviveAI] All LLM providers failed for {owner}/{repo}, using heuristic fallback")
         return None

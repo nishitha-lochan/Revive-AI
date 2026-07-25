@@ -26,8 +26,8 @@ def analyze_repository(payload: Dict[str, Any] = Body(...), db: Session = Depend
 
         # Fetch user tokens if present
         user = db.query(User).first()
-        github_token = user.github_token if user else None
-        openai_key = user.openai_key if user else None
+        github_token = (user.github_token if user else None) or os.getenv("GITHUB_TOKEN")
+        openai_key = (user.openai_key if user else None) or os.getenv("OPENAI_API_KEY")
 
         # Run LangGraph multi-agent workflow
         result = ManagerAgent.run_workflow(owner, repo, github_token, openai_key)

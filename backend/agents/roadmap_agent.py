@@ -16,9 +16,8 @@ class RoadmapAgent:
         dead_files = health.get("dead_code_files", [])
 
         # Pick target files from real tree if available
-        manifest_files = [fp for fp in file_paths if fp in ["package.json", "requirements.txt", "go.mod", "Cargo.toml", "pyproject.toml"]]
-        if not manifest_files:
-            manifest_files = [".env.example", "README.md"] if not is_empty else ["README.md"]
+        # Pick target files from real tree if available
+        manifest_files = [fp for fp in file_paths if fp in ["package.json", "pom.xml", "build.gradle", "requirements.txt", "go.mod", "Cargo.toml", "pyproject.toml"]]
 
         core_files = [fp for fp in file_paths if any(term in fp for term in ["src/", "app/", "main.", "index.", "cmd/", "lib/"])][:3]
         if not core_files:
@@ -62,8 +61,8 @@ class RoadmapAgent:
                 },
                 {
                     "week": 2,
-                    "title": f"Setup {database} Persistence Layer",
-                    "description": f"Configure connection pooling and schema models for {database}.",
+                    "title": "Setup Data Persistence Layer",
+                    "description": "Configure connection pooling and schema models for persistent storage.",
                     "priority": "Medium",
                     "estimated_hours": 6,
                     "difficulty": "Medium",
@@ -78,7 +77,7 @@ class RoadmapAgent:
                     "estimated_hours": 6,
                     "difficulty": "Medium",
                     "target_files": ["tests/app.test.ts"],
-                    "dependencies": [f"Setup {database} Persistence Layer"]
+                    "dependencies": ["Setup Data Persistence Layer"]
                 },
                 {
                     "week": 3,
@@ -117,7 +116,23 @@ class RoadmapAgent:
         purpose = intel.get("purpose", "")
         missing_list = intel.get("missing_features", [])
         entrypoint_file = intel.get("entrypoint_name") or (core_files[0] if core_files else "src/index.ts")
-        manifest_file = intel.get("manifest_name") or (manifest_files[0] if manifest_files else "package.json")
+
+        manifest_file = intel.get("manifest_name")
+        if not manifest_file or manifest_file in [".env.example", "README.md"]:
+            if manifest_files:
+                manifest_file = manifest_files[0]
+            else:
+                lang_lower = primary_lang.lower()
+                if "java" in lang_lower or "spring" in framework.lower():
+                    manifest_file = "pom.xml"
+                elif "python" in lang_lower:
+                    manifest_file = "requirements.txt"
+                elif "go" in lang_lower:
+                    manifest_file = "go.mod"
+                elif "rust" in lang_lower:
+                    manifest_file = "Cargo.toml"
+                else:
+                    manifest_file = "package.json"
 
         tasks = []
 
@@ -158,10 +173,15 @@ class RoadmapAgent:
             "dependencies": [f"Revive Local Dev Startup & Entrypoint ({entrypoint_file})"]
         })
 
+        db_label = database if database != "None detected" else "Persistent Database"
+        auth_label = auth if auth != "None detected" else "Auth Middleware"
+        data_auth_title = f"Harden Data Layer ({db_label}) & {auth_label}"
+        data_auth_desc = f"Configure connection pooling for {db_label}, sanitize query inputs, and implement {auth_label} protection."
+
         tasks.append({
             "week": 2,
-            "title": f"Harden Data Persistence ({database}) & {auth}",
-            "description": f"Configure connection pooling for {database}, sanitize query inputs, and implement {auth} middleware protection.",
+            "title": data_auth_title,
+            "description": data_auth_desc,
             "priority": "Medium",
             "estimated_hours": 6,
             "difficulty": "Medium",
@@ -178,7 +198,7 @@ class RoadmapAgent:
             "estimated_hours": 7,
             "difficulty": "Medium",
             "target_files": test_targets,
-            "dependencies": [f"Harden Data Persistence ({database}) & {auth}"]
+            "dependencies": [data_auth_title]
         })
 
         tasks.append({

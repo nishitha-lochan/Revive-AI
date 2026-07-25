@@ -200,19 +200,19 @@ export default function ProjectWorkspacePage() {
                       Health Metrics
                     </h3>
                     <div className="space-y-3 text-xs">
-                      {Object.entries(project.health_metrics || { documentation: 75, testing: 45, maintainability: 72 }).map(
-                        ([key, val]) => (
+                      {Object.entries(project.health_metrics || { documentation: 75, testing: 45, maintainability: 72 })
+                        .filter(([_, val]) => typeof val === 'number')
+                        .map(([key, val]) => (
                           <div key={key} className="space-y-1">
                             <div className="flex justify-between font-semibold capitalize text-slate-300">
-                              <span>{key}</span>
+                              <span>{key.replace(/_/g, ' ')}</span>
                               <span className="font-mono text-purple-400">{val}%</span>
                             </div>
                             <div className="w-full h-1.5 rounded-full bg-white/5 overflow-hidden">
-                              <div className="h-full rounded-full bg-purple-500" style={{ width: `${val}%` }} />
+                              <div className="h-full rounded-full bg-purple-500" style={{ width: `${Math.min(100, Math.max(0, val))}%` }} />
                             </div>
                           </div>
-                        )
-                      )}
+                        ))}
                     </div>
                   </div>
                 </div>
