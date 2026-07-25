@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // 'standalone' only needed for Docker deployments
+  output: "standalone",
 };
 
 export default nextConfig;
