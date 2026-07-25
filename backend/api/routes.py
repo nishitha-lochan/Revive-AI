@@ -18,17 +18,21 @@ def analyze_repository(payload: Dict[str, Any] = Body(...), db: Session = Depend
     if not repo_url:
         raise HTTPException(status_code=400, detail="repo_url is required")
 
-    parsed = RepoService.parse_github_url(repo_url)
-    owner = parsed["owner"]
-    repo = parsed["repo"]
+    try:
+        parsed = RepoService.parse_github_url(repo_url)
+        owner = parsed["owner"]
+        repo = parsed["repo"]
 
-    # Fetch user tokens if present
-    user = db.query(User).first()
-    github_token = user.github_token if user else None
-    openai_key = user.openai_key if user else None
+        # Fetch user tokens if present
+        user = db.query(User).first()
+        github_token = user.github_token if user else None
+        openai_key = user.openai_key if user else None
 
-    # Run LangGraph multi-agent workflow
-    result = ManagerAgent.run_workflow(owner, repo, github_token, openai_key)
+        # Run LangGraph multi-agent workflow
+        result = ManagerAgent.run_workflow(owner, repo, github_token, openai_key)
+    except Exception as e:
+        print(f"Analysis error for {repo_url}: {e}")
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
     meta = result["metadata"]
     stack = result["stack"]
