@@ -11,6 +11,7 @@ class User(Base):
     email = Column(String(255), unique=True, index=True, nullable=True)
     name = Column(String(255), nullable=True)
     openai_key = Column(String(500), nullable=True)
+    gemini_key = Column(String(500), nullable=True)
     github_token = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 

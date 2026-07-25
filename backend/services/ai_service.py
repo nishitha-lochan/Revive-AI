@@ -4,22 +4,40 @@ import re
 import urllib.request
 from typing import Dict, Any, List, Optional
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
 
 class AIService:
     @staticmethod
+    def get_gemini_key(user_key: Optional[str] = None) -> Optional[str]:
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+        except Exception:
+            pass
+        return user_key or os.getenv("GEMINI_API_KEY")
+
+    @staticmethod
     def get_openai_key(user_key: Optional[str] = None) -> Optional[str]:
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+        except Exception:
+            pass
         return user_key or os.getenv("OPENAI_API_KEY")
 
     @staticmethod
     def _extract_references_from_reply(reply: str) -> List[Dict[str, str]]:
         """Extract file references mentioned in the AI reply (e.g. src/app/page.tsx)."""
-        # Match patterns like: path/to/file.ext or `path/to/file.ext`
         pattern = r"`?([a-zA-Z0-9_\-./]+\.[a-zA-Z]{1,10})`?"
         matches = re.findall(pattern, reply)
         seen = []
         refs = []
         for m in matches:
-            # Filter out noise (URLs, version numbers, common non-path matches)
             if m in seen or m.startswith("http") or re.match(r"^\d", m):
                 continue
             if len(m) < 4 or "." not in m:
@@ -34,191 +52,157 @@ class AIService:
     def generate_chat_response(
         prompt: str,
         repo_context: str,
-        openai_key: Optional[str] = None
+        openai_key: Optional[str] = None,
+        gemini_key: Optional[str] = None
     ) -> Dict[str, Any]:
-        key = AIService.get_openai_key(openai_key)
-        if key:
+        g_key = AIService.get_gemini_key(gemini_key)
+        o_key = AIService.get_openai_key(openai_key)
+
+        system_instruction = (
+            "You are Revive AI, an expert code comprehension and abandoned project revival AI assistant. "
+            "Your job is to analyze repositories, explain what projects are about, list implemented vs missing/abandoned features, "
+            "and guide developers step-by-step on how to revive, repair, and take ownership of the codebase.\n\n"
+            "Guidelines:\n"
+            "1. Answer concisely and specifically based on the provided Codebase Context.\n"
+            "2. When referencing files, use exact file paths enclosed in backticks (e.g., `src/index.ts`).\n"
+            "3. Provide actionable code snippets or architectural steps whenever asked how to fix or revive a feature.\n"
+            "4. Do NOT give generic boilerplate answers. Every reply must directly address the specific repository.\n\n"
+            f"--- CODEBASE CONTEXT ---\n{repo_context}\n--- END CODEBASE CONTEXT ---"
+        )
+
+        # ── 1. Try Google Gemini API ──────────────────────────────────────
+        if g_key:
+            for model_name in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+                try:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={g_key}"
+                    headers = {"Content-Type": "application/json"}
+                    body = {
+                        "contents": [
+                            {
+                                "role": "user",
+                                "parts": [
+                                    {"text": f"{system_instruction}\n\nUser Question: {prompt}"}
+                                ]
+                            }
+                        ],
+                        "generationConfig": {
+                            "temperature": 0.3,
+                            "maxOutputTokens": 1500
+                        }
+                    }
+                    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers)
+                    with urllib.request.urlopen(req, timeout=25) as res:
+                        data = json.loads(res.read().decode())
+                        reply = data["candidates"][0]["content"]["parts"][0]["text"]
+                        refs = AIService._extract_references_from_reply(reply)
+                        return {
+                            "message": reply,
+                            "model": f"Gemini ({model_name})",
+                            "references": refs
+                        }
+                except Exception as e:
+                    print(f"Gemini API ({model_name}) call failed: {e}")
+                    pass
+
+        # ── 2. Try OpenAI API ─────────────────────────────────────────────
+        if o_key:
             try:
                 url = "https://api.openai.com/v1/chat/completions"
                 headers = {
                     "Content-Type": "application/json",
-                    "Authorization": f"Bearer {key}"
+                    "Authorization": f"Bearer {o_key}"
                 }
                 body = {
                     "model": "gpt-4o-mini",
                     "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are Revive AI, an expert code comprehension and recovery agent. "
-                                "Answer questions concisely and specifically based on the provided codebase context. "
-                                "When referencing files, use their actual paths. "
-                                "Do NOT give generic answers — every answer must be grounded in the context provided.\n\n"
-                                f"Codebase Context:\n{repo_context}"
-                            )
-                        },
+                        {"role": "system", "content": system_instruction},
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.3
                 }
                 req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers)
-                with urllib.request.urlopen(req, timeout=30) as res:
+                with urllib.request.urlopen(req, timeout=25) as res:
                     data = json.loads(res.read().decode())
                     reply = data["choices"][0]["message"]["content"]
                     refs = AIService._extract_references_from_reply(reply)
                     return {
                         "message": reply,
-                        "model": "gpt-4o-mini",
+                        "model": "GPT-4o-Mini",
                         "references": refs
                     }
             except Exception as e:
-                # Fall through to intelligent fallback with the error noted
+                print(f"OpenAI API call failed: {e}")
                 pass
 
-        # ── Intelligent fallback (no API key or API error) ──────────────────
+        # ── 3. Codebase-Grounded Intelligent Synthesis Fallback ────────────
+        return AIService._codebase_grounded_fallback(prompt, repo_context)
+
+    @staticmethod
+    def _codebase_grounded_fallback(prompt: str, repo_context: str) -> Dict[str, Any]:
         prompt_lower = prompt.lower()
-        ctx_lower = repo_context.lower()
+        repo = AIService._extract_field(repo_context, "Project") or "this repository"
+        lang = AIService._extract_field(repo_context, "Language") or "Codebase"
+        framework = AIService._extract_field(repo_context, "Framework") or "Framework"
+        purpose = AIService._extract_field(repo_context, "Purpose") or "Software application"
+        impl = AIService._extract_field(repo_context, "Implemented Features") or "Core architecture"
+        miss = AIService._extract_field(repo_context, "Missing/Abandoned Features") or "Test suite & documentation"
+        entrypoint = AIService._extract_field(repo_context, "Primary Entrypoint") or "src/index.ts"
 
-        is_empty = (
-            "no active source code" in ctx_lower
-            or ("empty" in ctx_lower and "summary" in ctx_lower)
-            or len(repo_context.strip()) < 50
-        )
-
-        if is_empty:
+        # Check intent
+        if any(kw in prompt_lower for kw in ["what is", "about", "overview", "describe", "purpose", "explain repo"]):
             reply = (
-                "This repository has no active source code detected.\n\n"
-                "• It appears to be an empty or documentation-only repository.\n"
-                "• **Next step**: Follow the generated **Recovery Roadmap** (Week 1) "
-                "to initialize a standard directory layout and entry points."
+                f"### 📦 What `{repo}` is About\n\n"
+                f"**Project Purpose**: {purpose}\n\n"
+                f"• **Primary Language & Framework**: **{lang}** with **{framework}**\n"
+                f"• **Primary Entry Point**: `{entrypoint}`\n\n"
+                f"#### Implemented Features:\n{impl}\n\n"
+                f"#### Abandoned / Missing Features to Revive:\n{miss}\n\n"
+                f"> 💡 **Revival Strategy**: Check the **Recovery Roadmap** tab for step-by-step tasks to take ownership of this codebase. For deep code-generation responses, add a `GEMINI_API_KEY` or `OPENAI_API_KEY` in `backend/.env`!"
             )
-            refs = [{"file": "README.md", "lines": "L1-L20"}]
+            refs = [{"file": entrypoint, "lines": "L1-L40"}, {"file": "README.md", "lines": "L1-L30"}]
 
-        elif any(kw in prompt_lower for kw in ["auth", "login", "token", "jwt", "oauth", "session", "password"]):
+        elif any(kw in prompt_lower for kw in ["feature", "functionality", "working", "missing", "abandoned", "todo"]):
             reply = (
-                f"**Authentication Analysis**\n\n"
-                f"Repository: `{AIService._extract_repo_name(repo_context)}`\n\n"
-                "• **Strategy detected**: Session/token-based authentication patterns are common in this stack.\n"
-                "• **Key concern**: Ensure all secret keys and credentials are stored in `.env` — never committed to source.\n"
-                "• **OAuth / JWT**: Verify token refresh logic and expiry handling in your auth middleware.\n"
-                "• **Recommended files to check**: `.env.example`, auth middleware, and the primary API entry point.\n\n"
-                "> ⚠️ To get a fully accurate answer for your specific codebase, add an OpenAI API key in Settings."
+                f"### 🚀 Feature Breakdown for `{repo}`\n\n"
+                f"#### ✅ Currently Implemented / Detected Features:\n{impl}\n\n"
+                f"#### ⚠️ Missing / Abandoned Features Needing Revival:\n{miss}\n\n"
+                f"#### 🛠️ Recommended Action Items:\n"
+                f"1. Open `{entrypoint}` to verify server/application startup.\n"
+                f"2. Add `.env.example` with required secret credentials.\n"
+                f"3. Follow Week 2 of the **Recovery Roadmap** to build out the missing components."
             )
-            refs = [{"file": ".env.example", "lines": "L1-L20"}]
+            refs = [{"file": entrypoint, "lines": "L1-L50"}]
 
-        elif any(kw in prompt_lower for kw in ["db", "database", "schema", "migration", "orm", "sql", "mongo", "postgres", "sqlite"]):
+        elif any(kw in prompt_lower for kw in ["revive", "fix", "repair", "take over", "abandoned", "how to"]):
             reply = (
-                f"**Data Layer Analysis**\n\n"
-                f"Repository: `{AIService._extract_repo_name(repo_context)}`\n\n"
-                "• **Database context**: Check your ORM configuration and connection pooling settings.\n"
-                "• **Migrations**: Ensure migrations are version-controlled and run as part of your CI/CD pipeline.\n"
-                "• **Schema**: Inspect your model/schema definitions for missing indexes on frequently-queried fields.\n\n"
-                "> ⚠️ To get a fully accurate answer for your specific codebase, add an OpenAI API key in Settings."
+                f"### 🛠️ How to Revive `{repo}` into Your Own Application\n\n"
+                f"Follow this 4-step revival plan for `{repo}` ({framework} / {lang}):\n\n"
+                f"1. **Environment Setup**: Copy `.env.example` to `.env` and verify key dependencies in the manifest file.\n"
+                f"2. **Fix Entry Point**: Run the local server via `{entrypoint}` and fix any unhandled startup errors.\n"
+                f"3. **Build Missing Features**:\n{miss}\n"
+                f"4. **Add Tests & Containerization**: Add test specs and Docker configuration to make it production-ready.\n\n"
+                f"> 🚀 Check the **Recovery Roadmap** tab to track your week-by-week progress!"
             )
-            refs = [{"file": "README.md", "lines": "L15-L35"}]
-
-        elif any(kw in prompt_lower for kw in ["api", "endpoint", "route", "rest", "graphql", "request", "response"]):
-            reply = (
-                f"**API & Routing Analysis**\n\n"
-                f"Repository: `{AIService._extract_repo_name(repo_context)}`\n\n"
-                "• **Framework**: {framework}\n"
-                "• **Routes**: API routes are typically defined in a dedicated `routes/` or `api/` directory.\n"
-                "• **Best practice**: Use versioned routes (e.g., `/api/v1/`) and validate all inputs at the route level.\n\n"
-                "> ⚠️ To get a fully accurate answer for your specific codebase, add an OpenAI API key in Settings."
-            ).format(framework=AIService._extract_field(repo_context, "Framework") or "detected from stack")
-            refs = [{"file": "README.md", "lines": "L1-L30"}]
-
-        elif any(kw in prompt_lower for kw in ["test", "testing", "coverage", "unit", "integration", "jest", "pytest", "spec"]):
-            reply = (
-                f"**Testing Analysis**\n\n"
-                f"Repository: `{AIService._extract_repo_name(repo_context)}`\n\n"
-                "• **Coverage**: Review the **Recovery Roadmap** tab for test coverage tasks.\n"
-                "• **Framework**: Look for test configuration files like `jest.config.js`, `pytest.ini`, or `.nycrc`.\n"
-                "• **Priority**: Add unit tests for core business logic and integration tests for API endpoints.\n\n"
-                "> ⚠️ To get a fully accurate answer for your specific codebase, add an OpenAI API key in Settings."
-            )
-            refs = [{"file": "README.md", "lines": "L1-L40"}]
-
-        elif any(kw in prompt_lower for kw in ["deploy", "deployment", "ci", "cd", "docker", "kubernetes", "env", "environment", "production"]):
-            reply = (
-                f"**Deployment & DevOps Analysis**\n\n"
-                f"Repository: `{AIService._extract_repo_name(repo_context)}`\n\n"
-                "• **Language**: {lang} — use an appropriate base image if containerizing.\n"
-                "• **Environment variables**: Always separate config from code. Use `.env` locally and secret managers in production.\n"
-                "• **CI/CD**: Set up a pipeline that runs tests before deploying. Check for a `.github/workflows/` or similar config.\n\n"
-                "> ⚠️ To get a fully accurate answer for your specific codebase, add an OpenAI API key in Settings."
-            ).format(lang=AIService._extract_field(repo_context, "Language") or "your language")
-            refs = [{"file": ".env.example", "lines": "L1-L10"}]
-
-        elif any(kw in prompt_lower for kw in ["architecture", "structure", "folder", "directory", "modules", "design", "pattern"]):
-            reply = (
-                f"**Architecture Overview**\n\n"
-                f"Repository: `{AIService._extract_repo_name(repo_context)}`\n"
-                f"Language: **{AIService._extract_field(repo_context, 'Language') or 'N/A'}** | "
-                f"Framework: **{AIService._extract_field(repo_context, 'Framework') or 'N/A'}**\n\n"
-                "• Explore the **Architecture Graph** tab for a visual module dependency map.\n"
-                "• Modules are typically organized by feature or layer (e.g., `api/`, `services/`, `models/`).\n"
-                "• Refer to the **Recovery Roadmap** for recommended structural improvements.\n\n"
-                "> ⚠️ To get a fully accurate answer for your specific codebase, add an OpenAI API key in Settings."
-            )
-            refs = [{"file": "README.md", "lines": "L1-L50"}]
-
-        elif any(kw in prompt_lower for kw in ["performance", "speed", "slow", "optimize", "cache", "memory", "latency"]):
-            reply = (
-                f"**Performance Analysis**\n\n"
-                f"Repository: `{AIService._extract_repo_name(repo_context)}`\n\n"
-                "• **Caching**: Add caching layers (Redis, in-memory) for expensive queries or API calls.\n"
-                "• **Database**: Review slow queries and add indexes where appropriate.\n"
-                "• **Frontend**: Lazy-load components, optimize bundle size, and use CDN for static assets.\n\n"
-                "> ⚠️ To get a fully accurate answer for your specific codebase, add an OpenAI API key in Settings."
-            )
-            refs = [{"file": "README.md", "lines": "L1-L30"}]
-
-        elif any(kw in prompt_lower for kw in ["security", "vulnerability", "xss", "csrf", "injection", "sanitize"]):
-            reply = (
-                f"**Security Analysis**\n\n"
-                f"Repository: `{AIService._extract_repo_name(repo_context)}`\n\n"
-                "• **Input validation**: Sanitize and validate all user inputs at the API boundary.\n"
-                "• **Dependencies**: Regularly run `npm audit` or `pip check` / `safety check` for known CVEs.\n"
-                "• **Secrets**: Ensure no API keys or credentials are committed. Use `.gitignore` and secret scanning.\n\n"
-                "> ⚠️ To get a fully accurate answer for your specific codebase, add an OpenAI API key in Settings."
-            )
-            refs = [{"file": ".env.example", "lines": "L1-L10"}]
+            refs = [{"file": entrypoint, "lines": "L1-L30"}, {"file": "README.md", "lines": "L1-L20"}]
 
         else:
-            # Generic fallback — at minimum, use project metadata from context
-            repo = AIService._extract_repo_name(repo_context)
-            lang = AIService._extract_field(repo_context, "Language") or "the detected language"
-            framework = AIService._extract_field(repo_context, "Framework") or "the detected framework"
-            summary = AIService._extract_field(repo_context, "Summary") or ""
-
-            summary_line = f"\n**Summary**: {summary[:300]}..." if summary else ""
-
             reply = (
-                f"**Repository Insight — `{repo}`**\n"
-                f"Language: **{lang}** | Framework: **{framework}**{summary_line}\n\n"
-                f"Regarding your question: *\"{prompt}\"*\n\n"
-                "• Use the **Architecture Graph** tab to explore module relationships visually.\n"
-                "• The **Recovery Roadmap** lists specific action items for this codebase.\n"
-                "• For deep, code-specific answers, add an **OpenAI API key** in Settings — "
-                "the AI will then answer using actual file contents and line references.\n\n"
-                "> ℹ️ This is a context-aware fallback response. Connect an OpenAI API key for precise answers."
+                f"### 🔍 Repository Intelligence — `{repo}`\n\n"
+                f"**Language**: {lang} | **Framework**: {framework}\n"
+                f"**Purpose**: {purpose}\n\n"
+                f"Regarding your query *\"{prompt}\"*:\n\n"
+                f"• **Main entry file**: `{entrypoint}`\n"
+                f"• **Implemented capabilities**:\n{impl}\n"
+                f"• **Key missing items**:\n{miss}\n\n"
+                f"> ℹ️ To receive real-time AI code generation for any question, add your `GEMINI_API_KEY` or `OPENAI_API_KEY` to `backend/.env`."
             )
-            refs = [{"file": "README.md", "lines": "L1-L40"}]
+            refs = [{"file": entrypoint, "lines": "L1-L30"}]
 
         return {
             "message": reply,
-            "model": "Revive-AI-LocalAgent",
+            "model": "Revive-AI Codebase Engine",
             "references": refs
         }
-
-    @staticmethod
-    def _extract_repo_name(context: str) -> str:
-        """Extract 'owner/repo' from context string."""
-        for line in context.splitlines():
-            if line.lower().startswith("project:"):
-                return line.split(":", 1)[1].strip()
-        return "this repository"
 
     @staticmethod
     def _extract_field(context: str, field: str) -> Optional[str]:

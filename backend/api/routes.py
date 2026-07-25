@@ -1,3 +1,4 @@
+import os
 import json
 import datetime
 from typing import Dict, Any, List, Optional
@@ -242,9 +243,10 @@ def chat_with_repo(payload: Dict[str, Any] = Body(...), db: Session = Depends(ge
     db.add(user_chat)
     db.commit()
 
-    # Generate response
+    # Generate response using LLM
     user = db.query(User).first()
-    openai_key = user.openai_key if user else None
+    openai_key = (user.openai_key if user and user.openai_key else None) or os.getenv("OPENAI_API_KEY")
+    gemini_key = (user.gemini_key if user and getattr(user, "gemini_key", None) else None) or os.getenv("GEMINI_API_KEY")
 
     analysis = db.query(RepositoryAnalysis).filter(RepositoryAnalysis.project_id == project.id).first()
     summary_txt = analysis.summary if analysis else ""
@@ -261,7 +263,7 @@ def chat_with_repo(payload: Dict[str, Any] = Body(...), db: Session = Depends(ge
             arch_data = json.loads(analysis.architecture_graph_json or "{}")
             nodes = arch_data.get("nodes", [])
             if nodes:
-                arch_info = ", ".join(n.get("id", "") for n in nodes[:20])
+                arch_info = ", ".join(n.get("id", "") for n in nodes[:25])
         except Exception:
             pass
 
@@ -270,10 +272,11 @@ def chat_with_repo(payload: Dict[str, Any] = Body(...), db: Session = Depends(ge
         f"Language: {project.primary_language}\n"
         f"Framework: {project.framework}\n"
         f"Tech Stack: {tech_stack or 'N/A'}\n"
-        f"Key Modules: {arch_info or 'N/A'}\n"
-        f"Summary: {summary_txt}"
+        f"Architecture Modules: {arch_info or 'N/A'}\n\n"
+        f"--- EXECUTIVE SUMMARY & DIAGNOSIS ---\n"
+        f"{summary_txt}\n"
     )
-    ai_res = AIService.generate_chat_response(prompt, context, openai_key)
+    ai_res = AIService.generate_chat_response(prompt, context, openai_key=openai_key, gemini_key=gemini_key)
 
     # Store assistant response
     assistant_chat = Chat(
@@ -323,8 +326,9 @@ def get_user_profile(db: Session = Depends(get_db)):
         "id": user.id,
         "email": user.email,
         "name": user.name,
-        "has_openai_key": bool(user.openai_key),
-        "has_github_token": bool(user.github_token)
+        "has_openai_key": bool(user.openai_key or os.getenv("OPENAI_API_KEY")),
+        "has_gemini_key": bool(getattr(user, "gemini_key", None) or os.getenv("GEMINI_API_KEY")),
+        "has_github_token": bool(user.github_token or os.getenv("GITHUB_TOKEN"))
     }
 
 @router.put("/user/settings")
@@ -336,6 +340,8 @@ def update_settings(payload: Dict[str, Any] = Body(...), db: Session = Depends(g
 
     if "openai_key" in payload:
         user.openai_key = payload["openai_key"]
+    if "gemini_key" in payload and hasattr(user, "gemini_key"):
+        user.gemini_key = payload["gemini_key"]
     if "github_token" in payload:
         user.github_token = payload["github_token"]
     if "name" in payload:
@@ -343,3 +349,4 @@ def update_settings(payload: Dict[str, Any] = Body(...), db: Session = Depends(g
 
     db.commit()
     return {"status": "updated"}
+

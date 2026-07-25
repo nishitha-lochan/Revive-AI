@@ -30,3 +30,10 @@ def get_db():
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    try:
+        from sqlalchemy import text
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN gemini_key VARCHAR(500);"))
+    except Exception:
+        pass
+

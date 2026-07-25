@@ -32,11 +32,11 @@ export const RepoChatTab: React.FC<{ projectId: number; initialChats?: ChatMessa
   const [loading, setLoading] = useState(false);
 
   const quickPrompts = [
-    'What does auth do?',
-    'Explain payment flow.',
-    'Where is login implemented?',
-    'How to add notifications?',
-    'Explain database models.',
+    'What is this project about & what features exist?',
+    'What features are missing or abandoned?',
+    'How do I revive this project step-by-step?',
+    'Where is main entrypoint and API routing?',
+    'How to setup environment and tests?',
   ];
 
   const handleSend = async (textToSend?: string) => {

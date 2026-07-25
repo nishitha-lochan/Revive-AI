@@ -1,9 +1,9 @@
 const getApiBaseUrl = () => {
   const envUrl = process.env.NEXT_PUBLIC_API_URL;
-  if (envUrl && !envUrl.includes("localhost")) {
+  if (envUrl) {
     return envUrl.endsWith("/api") ? envUrl : `${envUrl.replace(/\/$/, "")}/api`;
   }
-  return "https://dazzling-nurturing-production-bbd4.up.railway.app/api";
+  return "http://localhost:8000/api";
 };
 
 const API_BASE_URL = getApiBaseUrl();

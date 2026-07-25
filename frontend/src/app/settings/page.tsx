@@ -12,6 +12,7 @@ import { useReviveStore } from '@/store/useReviveStore';
 export default function SettingsPage() {
   const { setApiKeys } = useReviveStore();
   const [name, setName] = useState('Lead Developer');
+  const [geminiKey, setGeminiKey] = useState('');
   const [openaiKey, setOpenaiKey] = useState('');
   const [githubToken, setGithubToken] = useState('');
   const [saved, setSaved] = useState(false);
@@ -20,9 +21,7 @@ export default function SettingsPage() {
     fetchUserProfile().then((u) => {
       if (u) {
         setName(u.name || 'Lead Developer');
-        // Restore key presence in the store so the Navbar shows the correct status.
-        // We don't expose the raw key — use a sentinel value so the store knows a key exists.
-        if (u.has_openai_key || u.has_github_token) {
+        if (u.has_openai_key || u.has_gemini_key || u.has_github_token) {
           setApiKeys(
             u.has_openai_key ? '••••••••' : '',
             u.has_github_token ? '••••••••' : ''
@@ -35,10 +34,11 @@ export default function SettingsPage() {
   const handleSave = async () => {
     await updateUserSettings({
       name,
+      gemini_key: geminiKey,
       openai_key: openaiKey,
       github_token: githubToken,
     });
-    setApiKeys(openaiKey, githubToken);
+    setApiKeys(openaiKey || geminiKey, githubToken);
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
@@ -58,7 +58,7 @@ export default function SettingsPage() {
               Settings & AI Configurations
             </h1>
             <p className="text-xs text-slate-400">
-              Configure OpenAI API keys, GitHub tokens, and developer profile credentials.
+              Configure Google Gemini API keys, OpenAI keys, GitHub tokens, or set them in backend/.env.
             </p>
           </div>
 
@@ -66,10 +66,10 @@ export default function SettingsPage() {
             {/* Zero Config Callout */}
             <div className="p-4 rounded-xl bg-purple-950/30 border border-purple-500/30 space-y-1.5">
               <div className="flex items-center gap-2 text-purple-300 font-bold text-sm">
-                <Sparkles className="w-4 h-4" /> Zero-Config Mode Active Out Of The Box
+                <Sparkles className="w-4 h-4" /> Live LLM Integration Active
               </div>
               <p className="text-xs text-slate-300 leading-relaxed">
-                Revive AI will function out of the box using specialized local heuristic agents if no API keys are provided. Add your key below to activate live GPT-4o LLM reasoning.
+                Add a <strong>Google Gemini API Key</strong> or <strong>OpenAI API Key</strong> below (or in <code>backend/.env</code>) to connect the chatbot directly to actual LLMs with full codebase context!
               </p>
             </div>
 
@@ -84,6 +84,23 @@ export default function SettingsPage() {
                 onChange={(e) => setName(e.target.value)}
                 className="w-full bg-slate-950/80 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-purple-500"
               />
+            </div>
+
+            {/* Google Gemini API Key */}
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-slate-300 flex items-center gap-2">
+                <Key className="w-4 h-4 text-purple-400" /> Google Gemini API Key (Recommended)
+              </label>
+              <input
+                type="password"
+                value={geminiKey}
+                onChange={(e) => setGeminiKey(e.target.value)}
+                placeholder="AIzaSy..."
+                className="w-full bg-slate-950/80 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-purple-500 font-mono"
+              />
+              <p className="text-[11px] text-slate-500">
+                Used for Gemini 2.0 Flash / 1.5 Flash codebase chat reasoning.
+              </p>
             </div>
 
             {/* OpenAI API Key */}

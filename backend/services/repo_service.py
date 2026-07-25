@@ -39,6 +39,23 @@ class RepoService:
         return None
 
     @staticmethod
+    def _gh_get_raw(path: str, token: Optional[str] = None) -> Optional[str]:
+        """Fetch raw file content from GitHub API."""
+        url = f"https://api.github.com{path}"
+        headers = {"User-Agent": "ReviveAI/1.0", "Accept": "application/vnd.github.v3.raw"}
+        token = token or os.getenv("GITHUB_TOKEN")
+        if token:
+            headers["Authorization"] = f"token {token}"
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=8) as res:
+                if res.status == 200:
+                    return res.read().decode("utf-8", errors="ignore")
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
     def fetch_repo_intelligence(
         owner: str, repo: str, github_token: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -226,6 +243,35 @@ class RepoService:
             test_files = []
             has_tests = False
 
+        # Read key file contents from repository
+        readme_txt = RepoService._gh_get_raw(f"/repos/{owner}/{repo}/contents/README.md", github_token) or ""
+        if not readme_txt:
+            readme_txt = RepoService._gh_get_raw(f"/repos/{owner}/{repo}/contents/readme.md", github_token) or ""
+
+        manifest_txt = ""
+        manifest_name = ""
+        for mf in ["package.json", "requirements.txt", "pyproject.toml", "go.mod", "Cargo.toml"]:
+            if mf in file_paths:
+                m_content = RepoService._gh_get_raw(f"/repos/{owner}/{repo}/contents/{mf}", github_token)
+                if m_content:
+                    manifest_txt = m_content[:1500]
+                    manifest_name = mf
+                    break
+
+        entrypoint_txt = ""
+        entrypoint_name = ""
+        for ep in file_paths:
+            if any(ep.endswith(suffix) for suffix in ["main.py", "app.py", "server.js", "index.ts", "index.js", "App.tsx", "page.tsx", "main.go", "main.rs"]):
+                ep_content = RepoService._gh_get_raw(f"/repos/{owner}/{repo}/contents/{ep}", github_token)
+                if ep_content:
+                    entrypoint_txt = ep_content[:2000]
+                    entrypoint_name = ep
+                    break
+
+        purpose, implemented, missing = RepoService._analyze_project_features(
+            owner, repo, intel, file_paths, readme_txt, manifest_txt, entrypoint_txt
+        )
+
         intel.update({
             "file_paths": file_paths,
             "file_count": len(file_paths),
@@ -234,9 +280,85 @@ class RepoService:
             "has_tests": has_tests,
             "database": database,
             "auth": auth,
-            "is_empty": is_empty
+            "is_empty": is_empty,
+            "readme_txt": readme_txt[:4000],
+            "manifest_name": manifest_name,
+            "manifest_txt": manifest_txt,
+            "entrypoint_name": entrypoint_name,
+            "entrypoint_txt": entrypoint_txt,
+            "purpose": purpose,
+            "implemented_features": implemented,
+            "missing_features": missing
         })
         return intel
+
+    @staticmethod
+    def _analyze_project_features(
+        owner: str, repo: str, intel: Dict[str, Any], file_paths: List[str],
+        readme_txt: str, manifest_txt: str, entrypoint_txt: str
+    ):
+        purpose = ""
+        if readme_txt:
+            for l in readme_txt.splitlines():
+                l_str = l.strip()
+                if l_str and not l_str.startswith("#") and not l_str.startswith("!") and not l_str.startswith("["):
+                    purpose = l_str
+                    break
+        if not purpose or len(purpose) < 15:
+            desc = intel.get("description") or ""
+            if desc and desc.lower() != f"repository {owner}/{repo}".lower():
+                purpose = desc
+            else:
+                purpose = f"A {intel.get('primary_language', 'software')} application built with {intel.get('framework', 'modern web frameworks')}."
+
+        implemented = []
+        if readme_txt:
+            in_feat = False
+            for line in readme_txt.splitlines():
+                if "feature" in line.lower() and line.startswith("#"):
+                    in_feat = True
+                    continue
+                if in_feat and line.startswith("#"):
+                    in_feat = False
+                if in_feat and (line.strip().startswith("-") or line.strip().startswith("*")):
+                    item = line.strip().lstrip("-* ").strip()
+                    if item and len(item) < 90:
+                        implemented.append(item)
+
+        if not implemented:
+            if any("auth" in f.lower() for f in file_paths):
+                implemented.append("Authentication & User Session Management")
+            if any("api" in f.lower() or "route" in f.lower() for f in file_paths):
+                implemented.append("REST / GraphQL API Controllers & Route Handlers")
+            if any("db" in f.lower() or "model" in f.lower() or "schema" in f.lower() for f in file_paths):
+                implemented.append("Database Models & Persistent Schema Layer")
+            if any("ui" in f.lower() or "component" in f.lower() for f in file_paths):
+                implemented.append("Frontend User Interface Components")
+            if any("docker" in f.lower() for f in file_paths):
+                implemented.append("Docker Container Deployment Setup")
+            if not implemented:
+                implemented.append(f"Core {intel.get('framework', 'Application')} Architecture Setup")
+
+        missing = []
+        if "TODO" in readme_txt or "TODO" in entrypoint_txt:
+            missing.append("Unimplemented TODO items and stubbed business logic functions")
+        if not intel.get("has_tests") and not any("test" in f.lower() for f in file_paths):
+            missing.append("Automated test suite (unit and integration test specs)")
+        if not intel.get("has_env_example"):
+            missing.append("Environment variable template (.env.example) & configuration guide")
+        if not intel.get("has_ci"):
+            missing.append("Automated CI/CD workflow pipeline (GitHub Actions)")
+        if intel.get("auth") == "None detected":
+            missing.append("Secure user authentication & token verification middleware")
+        if intel.get("database") == "None detected":
+            missing.append("Database connection pooling & schema migrations")
+        if not intel.get("has_dockerfile"):
+            missing.append("Production Dockerfile configuration for containerization")
+        if len(missing) < 2:
+            missing.append("Comprehensive API specs and developer setup guide")
+            missing.append("Dependency security auditing and lockfile updates")
+
+        return purpose, implemented[:6], missing[:6]
 
     @staticmethod
     def _generate_expected_files(

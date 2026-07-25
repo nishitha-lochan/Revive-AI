@@ -112,87 +112,108 @@ class RoadmapAgent:
                 }
             ]
 
-        # Dynamic roadmap for active repos
-        return [
-            {
-                "week": 1,
-                "title": f"Audit {framework} Configuration & Manifests",
-                "description": f"Review dependency versions in {', '.join(manifest_files)}, fix deprecated flags, and add missing .env.example template.",
-                "priority": "High",
-                "estimated_hours": 4,
-                "difficulty": "Easy",
-                "target_files": manifest_files,
-                "dependencies": []
-            },
-            {
-                "week": 1,
-                "title": f"Optimize Local Dev & Environment Startup",
-                "description": f"Verify local server startup for {framework} and update container/scripts.",
-                "priority": "High",
-                "estimated_hours": 5,
-                "difficulty": "Medium",
-                "target_files": ["Dockerfile", "docker-compose.yml"] if intel.get("has_dockerfile") else manifest_files[:2],
-                "dependencies": [f"Audit {framework} Configuration & Manifests"]
-            },
-            {
-                "week": 2,
-                "title": f"Refactor Core Handlers in {primary_lang}",
-                "description": f"Clean up error handling and state flow in primary codebase modules.",
-                "priority": "High",
-                "estimated_hours": 8,
-                "difficulty": "Medium",
-                "target_files": core_files,
-                "dependencies": ["Optimize Local Dev & Environment Startup"]
-            },
-            {
-                "week": 2,
-                "title": f"Harden Data Layer & {auth}",
-                "description": f"Verify {database} queries, parameter sanitization, and authentication token validation.",
-                "priority": "Medium",
-                "estimated_hours": 6,
-                "difficulty": "Hard",
-                "target_files": core_files[:2],
-                "dependencies": [f"Refactor Core Handlers in {primary_lang}"]
-            },
-            {
-                "week": 3,
-                "title": f"Expand Automated Test Suite for {primary_lang}",
-                "description": f"Increase regression testing coverage for core handlers and key features.",
-                "priority": "High" if not has_tests else "Medium",
-                "estimated_hours": 8,
-                "difficulty": "Medium",
-                "target_files": test_targets,
-                "dependencies": [f"Harden Data Layer & {auth}"]
-            },
-            {
-                "week": 3,
-                "title": "Clean Deprecated Code & Technical Debt",
-                "description": "Refactor or purge legacy functions and fix linter/compiler warnings.",
-                "priority": "Low",
-                "estimated_hours": 4,
-                "difficulty": "Easy",
-                "target_files": [f for f in dead_files if "/" in f][:2] or core_files[:1],
-                "dependencies": [f"Expand Automated Test Suite for {primary_lang}"]
-            },
-            {
-                "week": 4,
-                "title": "Publish Production Documentation & API Guide",
-                "description": f"Update README.md, document public interfaces, and write deployment instructions.",
-                "priority": "Medium",
-                "estimated_hours": 4,
-                "difficulty": "Easy",
-                "target_files": ["README.md", "docs/ARCHITECTURE.md"],
-                "dependencies": []
-            },
-            {
-                "week": 4,
-                "title": "Configure CI/CD Automation Pipeline",
-                "description": f"Setup automated build and test runner on pull requests using GitHub Actions.",
-                "priority": "Medium",
-                "estimated_hours": 5,
-                "difficulty": "Medium",
-                "target_files": [".github/workflows/ci.yml"] if has_ci else [".github/workflows/ci.yml"],
-                "dependencies": ["Publish Production Documentation & API Guide"]
-            }
-        ]
+        # Dynamic, project-customized roadmap for active repos
+        repo_name = intel.get("repo", "App")
+        purpose = intel.get("purpose", "")
+        missing_list = intel.get("missing_features", [])
+        entrypoint_file = intel.get("entrypoint_name") or (core_files[0] if core_files else "src/index.ts")
+        manifest_file = intel.get("manifest_name") or (manifest_files[0] if manifest_files else "package.json")
+
+        tasks = []
+
+        # Week 1: Environment & Foundational Fixes
+        tasks.append({
+            "week": 1,
+            "title": f"Audit & Fix {framework} Dependencies in {manifest_file}",
+            "description": f"Review dependency lockfile in {manifest_file}, update outdated/deprecated packages for {framework}, and add .env.example with secret keys.",
+            "priority": "High",
+            "estimated_hours": 4,
+            "difficulty": "Easy",
+            "target_files": [manifest_file, ".env.example"],
+            "dependencies": []
+        })
+
+        tasks.append({
+            "week": 1,
+            "title": f"Revive Local Dev Startup & Entrypoint ({entrypoint_file})",
+            "description": f"Ensure {entrypoint_file} runs cleanly without runtime crashes. Resolve missing imports and broken environment configurations.",
+            "priority": "High",
+            "estimated_hours": 5,
+            "difficulty": "Medium",
+            "target_files": [entrypoint_file, "docker-compose.yml" if intel.get("has_dockerfile") else manifest_file],
+            "dependencies": [f"Audit & Fix {framework} Dependencies in {manifest_file}"]
+        })
+
+        # Week 2: Core Feature Implementation & Missing Components
+        feat_title = f"Implement Missing: {missing_list[0]}" if missing_list else f"Refactor Core {primary_lang} Handlers"
+        feat_desc = f"Address primary repository gap: {missing_list[0]}. Implement missing route handlers and clean up stubbed logic." if missing_list else f"Clean up state management and API routes in {primary_lang}."
+        tasks.append({
+            "week": 2,
+            "title": feat_title,
+            "description": feat_desc,
+            "priority": "High",
+            "estimated_hours": 8,
+            "difficulty": "Hard",
+            "target_files": core_files,
+            "dependencies": [f"Revive Local Dev Startup & Entrypoint ({entrypoint_file})"]
+        })
+
+        tasks.append({
+            "week": 2,
+            "title": f"Harden Data Persistence ({database}) & {auth}",
+            "description": f"Configure connection pooling for {database}, sanitize query inputs, and implement {auth} middleware protection.",
+            "priority": "Medium",
+            "estimated_hours": 6,
+            "difficulty": "Medium",
+            "target_files": core_files[:2] if len(core_files) >= 2 else core_files,
+            "dependencies": [feat_title]
+        })
+
+        # Week 3: Testing & Code Health Recovery
+        tasks.append({
+            "week": 3,
+            "title": f"Build Automated Test Suite for {primary_lang} Components",
+            "description": f"Add automated unit and integration tests for {entrypoint_file} and core API handlers to prevent regression errors.",
+            "priority": "High" if not has_tests else "Medium",
+            "estimated_hours": 7,
+            "difficulty": "Medium",
+            "target_files": test_targets,
+            "dependencies": [f"Harden Data Persistence ({database}) & {auth}"]
+        })
+
+        tasks.append({
+            "week": 3,
+            "title": f"Purge Dead Code & Resolve Technical Debt",
+            "description": f"Clean up dead files ({', '.join(dead_files[:2]) if dead_files else 'unused modules'}), fix lint warnings, and standardize error handling.",
+            "priority": "Low",
+            "estimated_hours": 4,
+            "difficulty": "Easy",
+            "target_files": [f for f in dead_files if "/" in f][:2] or core_files[:1],
+            "dependencies": [f"Build Automated Test Suite for {primary_lang} Components"]
+        })
+
+        # Week 4: Production Documentation & Deployment
+        tasks.append({
+            "week": 4,
+            "title": f"Publish Custom README & Architecture Spec for {repo_name}",
+            "description": f"Document project purpose ({purpose[:60]}...), installation setup, API endpoints, and production deployment guide.",
+            "priority": "Medium",
+            "estimated_hours": 4,
+            "difficulty": "Easy",
+            "target_files": ["README.md", "docs/ARCHITECTURE.md"],
+            "dependencies": []
+        })
+
+        tasks.append({
+            "week": 4,
+            "title": "Configure GitHub Actions CI/CD Pipeline",
+            "description": f"Setup automated build and test runner on pull requests using GitHub Actions for {primary_lang}.",
+            "priority": "Medium",
+            "estimated_hours": 5,
+            "difficulty": "Medium",
+            "target_files": [".github/workflows/ci.yml"],
+            "dependencies": [f"Publish Custom README & Architecture Spec for {repo_name}"]
+        })
+
+        return tasks
 

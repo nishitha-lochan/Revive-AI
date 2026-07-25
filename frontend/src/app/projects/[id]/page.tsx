@@ -170,12 +170,12 @@ export default function ProjectWorkspacePage() {
                   <div className="lg:col-span-2 glass-card rounded-2xl p-6 border border-white/10 space-y-4">
                     <h3 className="text-lg font-bold text-white flex items-center gap-2">
                       <Sparkles className="w-5 h-5 text-purple-400" />
-                      Executive Diagnosis & Summary
+                      Project Analysis & Revival Diagnosis
                     </h3>
-                    <p className="text-xs text-slate-300 leading-relaxed">
+                    <div className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap font-sans space-y-2">
                       {project.summary ||
                         'Full-stack application codebase requiring dependency updates, documentation completion, and test suite expansion.'}
-                    </p>
+                    </div>
 
                     <div className="pt-4 border-t border-white/10 space-y-3">
                       <div className="text-xs font-bold text-slate-200 uppercase tracking-wider font-mono">
