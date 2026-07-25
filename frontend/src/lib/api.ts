@@ -3,7 +3,7 @@ const getApiBaseUrl = () => {
   if (envUrl && !envUrl.includes("localhost")) {
     return envUrl.endsWith("/api") ? envUrl : `${envUrl.replace(/\/$/, "")}/api`;
   }
-  return "/api";
+  return "https://dazzling-nurturing-production-bbd4.up.railway.app/api";
 };
 
 const API_BASE_URL = getApiBaseUrl();
