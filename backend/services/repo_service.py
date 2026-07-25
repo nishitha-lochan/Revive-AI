@@ -26,6 +26,7 @@ class RepoService:
         """Make a GitHub API GET request, return parsed JSON or None on failure."""
         url = f"https://api.github.com{path}"
         headers = {"User-Agent": "ReviveAI/1.0", "Accept": "application/vnd.github+json"}
+        token = token or os.getenv("GITHUB_TOKEN")
         if token:
             headers["Authorization"] = f"token {token}"
         try:
