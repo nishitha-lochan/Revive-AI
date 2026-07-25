@@ -1,4 +1,12 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+const getApiBaseUrl = () => {
+  const envUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (envUrl && !envUrl.includes("localhost")) {
+    return envUrl.endsWith("/api") ? envUrl : `${envUrl.replace(/\/$/, "")}/api`;
+  }
+  return "/api";
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 export interface ProjectData {
   id: number;
